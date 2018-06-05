@@ -25,6 +25,9 @@ from helpers.utils import float_type, ones_like, \
 
 parser = argparse.ArgumentParser(description='LifeLong VAE Pytorch')
 
+# Classifier
+parser.add_argument('--disable-classifier', action='store_true',
+                    help='dienables classification (enables only reconstruction)')
 # Task parameters
 parser.add_argument('--uid', type=str, default="",
                     help="add a custom task-specific unique id; appended to name (default: None)")
@@ -234,8 +237,9 @@ def execute_graph(epoch, model, fisher, data_loader, grapher, optimizer=None, pr
     assert optimizer is not None if 'train' in prefix else optimizer is None
     loss_map, params, num_samples = {}, {}, 0
 
-    for data, _ in data_loader:
+    for data, labels in data_loader:
         data = Variable(data).cuda() if args.cuda else Variable(data)
+        label = Variable(label).cuda() if args.cuda else Variable(label)
 
         if 'train' in prefix:
             # zero gradients on optimizer

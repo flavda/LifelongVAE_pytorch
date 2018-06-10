@@ -119,15 +119,10 @@ class ParallellyReparameterizedVAE(AbstractVAE):
 
         return mut_info
 
-    def classify(self, x):
-   # ''' classify latent variables z '''
-        z_logits = self.encode(x)
-        return self.classifier(z_logits)
 
 
-    def loss_function(self, recon_x, x, params, y_hat= None, y= None):
+    def loss_function(self, recon_x, x, params):
         ''' evaluates the loss of the model '''
         mut_info = self.mut_info(params)
 
-        return super(ParallellyReparameterizedVAE,self).loss_function(recon_x, x, params, y_hat, y,
-                                                                                           mut_info=mut_info)
+        return super(ParallellyReparameterizedVAE,self).loss_function(recon_x, x, params, mut_info=mut_info)

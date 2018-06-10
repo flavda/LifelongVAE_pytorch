@@ -8,10 +8,14 @@ from collections import OrderedDict, Counter
 
 from helpers.utils import float_type
 from models.relational_network import RelationalNetwork
+#from helpers.layers import View, flatten_layers, Identity, \
+ #   build_gated_conv_encoder, build_conv_encoder, build_dense_encoder, build_relational_conv_encoder, \
+  #  build_gated_conv_decoder, build_conv_decoder, build_dense_decoder, build_dense_classifier, build_pixelcnn_decoder, \
+   # str_to_activ_module
 from helpers.layers import View, flatten_layers, Identity, \
-    build_gated_conv_encoder, build_conv_encoder, build_dense_encoder, build_relational_conv_encoder, \
-    build_gated_conv_decoder, build_conv_decoder, build_dense_decoder, build_dense_classifier, build_pixelcnn_decoder, \
-    str_to_activ_module
+    build_conv_encoder, build_dense_encoder, build_relational_conv_encoder, \
+     build_conv_decoder, build_dense_decoder, build_dense_classifier, build_pixelcnn_decoder
+
 from helpers.distributions import nll_activation as nll_activation_fn
 from helpers.distributions import nll as nll_fn
 

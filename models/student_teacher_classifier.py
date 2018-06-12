@@ -12,9 +12,9 @@ from helpers.distributions import nll
 from helpers.utils import expand_dims, long_type, squeeze_expand_dim, \
     ones_like, float_type, pad, inv_perm, one_hot_np, \
     zero_pad_smaller_cat, check_or_create_dir
-from models.vae.parallelly_reparameterized_vae_classifier import ParallellyReparameterizedVAEClassifier
+from models.vae.parallelly_reparemetrized_vae_classifier import ParallellyReparameterizedVAEClassifier
 #from models.vae.sequentially_reparameterized_vae import SequentiallyReparameterizedVAE
-
+from models.student_teacher import StudentTeacher
 
 def detach_from_graph(param_map):
     for _, v in param_map.items():
@@ -75,7 +75,7 @@ def lazy_generate_modules(model, img_shp, batch_size, cuda):
 class StudentTeacherClassifier(StudentTeacher):
     def __init__(self, initial_model, **kwargs):
         ''' Helper to keep the student-teacher architecture '''
-        super(StudentTeacherClassifier, self).__init__()
+        super(StudentTeacherClassifier, self).__init__(initial_model)
         self.teacher = None
         self.student = initial_model
         self.current_model = 0
@@ -85,7 +85,7 @@ class StudentTeacherClassifier(StudentTeacher):
         self.num_student_samples = None
 
         # grab the meta config and print for
-        self.config = kwargs['kwargs']
+      #  self.config = kwargs['kwargs']
 
 
     def _lifelong_loss_function_with_classifier(self, output_map):
@@ -127,24 +127,24 @@ class StudentTeacherClassifier(StudentTeacher):
         return vae_loss
 
 
-#    def _ewc(self, fisher_matrix):
-#        losses = []
-#        assert len(list(self.teacher.named_parameters())) \
-#            == len(list(self.student.named_parameters())) \
-#            == len(fisher_matrix), "#student params != #teacher params != #fisher params"
-#        for (nt, pt), (ns, ps), (nf, fish) in zip(self.teacher.named_parameters(),
-#                                                  self.student.named_parameters(),
-#                                                  fisher_matrix.items()):
+    def _ewc(self, fisher_matrix):
+        losses = []
+        assert len(list(self.teacher.named_parameters())) \
+               == len(list(self.student.named_parameters())) \
+               == len(fisher_matrix), "#student params != #teacher params != #fisher params"
+        for (nt, pt), (ns, ps), (nf, fish) in zip(self.teacher.named_parameters(),
+                                                  self.student.named_parameters(),
+                                                  fisher_matrix.items()):
             # print("f {} * (t {} - s {})".format(nf, nt, ns))
             # print("f {} * (t {} - s {})".format(fish.size(), pt.size(), ps.size()))
             # print("f {} * (t {} - s {})".format(fish.type(), pt.type(), ps.type()))
-#            if pt.size() != ps.size() != fish.size():
-#                raise Exception("""teacher param [{}] does not match student
-#                param[{}] does not match fisher info param[{}]""".format(
-#                    pt.size(), ps.size(), fish.size()
-#                ))
+            if pt.size() != ps.size() != fish.size():
+                raise Exception("""teacher param [{}] does not match student
+                   param[{}] does not match fisher info param[{}]""".format(
+                    pt.size(), ps.size(), fish.size()
+                ))
 
-            losses.append(torch.sum(fish * (ps - pt)**2))
+            losses.append(torch.sum(fish * (ps - pt) ** 2))
 
         return (self.config['ewc_gamma'] / 2.0) * sum(losses)
 
@@ -305,6 +305,11 @@ class StudentTeacherClassifier(StudentTeacher):
             if self.config['cuda']:
                 self.rnd_perm = self.rnd_perm.cuda()
 
+        #     return merged_x[self.rnd_perm]
+        # else:
+        #
+        #     return merged_x
+
             return merged_x[self.rnd_perm], merged_y[self.rnd_perm]
         else:
 
@@ -334,7 +339,7 @@ class StudentTeacherClassifier(StudentTeacher):
             },
             'augmented': {
                 'data': x_augmented,
-                'labels' : y_augmented
+                'labels' : y_augmented,
                 'num_student': self.num_student_samples,
                 'num_teacher': self.num_teacher_samples
             }

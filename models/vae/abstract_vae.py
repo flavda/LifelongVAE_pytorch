@@ -8,14 +8,9 @@ from collections import OrderedDict, Counter
 
 from helpers.utils import float_type
 from models.relational_network import RelationalNetwork
-#from helpers.layers import View, flatten_layers, Identity, \
- #   build_gated_conv_encoder, build_conv_encoder, build_dense_encoder, build_relational_conv_encoder, \
-  #  build_gated_conv_decoder, build_conv_decoder, build_dense_decoder, build_dense_classifier, build_pixelcnn_decoder, \
-   # str_to_activ_module
 from helpers.layers import View, flatten_layers, Identity, \
-    build_conv_encoder, build_dense_encoder, build_relational_conv_encoder, \
-     build_conv_decoder, build_dense_decoder, build_dense_classifier, build_pixelcnn_decoder
-
+    build_gated_conv_encoder, build_conv_encoder, build_dense_encoder, build_relational_conv_encoder, \
+    build_gated_conv_decoder, build_conv_decoder, build_dense_decoder, build_pixelcnn_decoder, str_to_activ_module
 from helpers.distributions import nll_activation as nll_activation_fn
 from helpers.distributions import nll as nll_fn
 
@@ -105,7 +100,7 @@ class AbstractVAE(nn.Module):
                                                         activation_fn=self.activation_fn)
                 raise NotImplementedError
             else:
-                conv_builder = build_conv_encoder \
+                conv_builder = build_gated_conv_encoder \
                            if self.config['disable_gated_conv'] is False else build_conv_encoder
                 encoder = conv_builder(input_shape=self.input_shape,
                                        output_size=self.reparameterizer.input_size,
@@ -132,7 +127,7 @@ class AbstractVAE(nn.Module):
     def build_decoder(self):
         ''' helper function to build convolutional or dense decoder'''
         if self.config['layer_type'] == 'conv':
-            conv_builder = build_conv_decoder \
+            conv_builder = build_gated_conv_decoder \
                            if self.config['disable_gated_conv'] is False else build_conv_decoder
             decoder = nn.Sequential(
                 conv_builder(input_size=self.reparameterizer.output_size,
@@ -166,21 +161,6 @@ class AbstractVAE(nn.Module):
 
         return decoder
 
-    def build_classifier(self):
-        ''' helper function to build dense classifier'''
-
-        classifier = build_dense_classifier(input_size=self.reparameterizer.output_size,
-                                            output_shape=10,
-                                            activation_fn=self.activation_fn,
-                                            normalization_str=self.config['normalization'])
-        if self.config['ngpu'] > 1:
-            classifier = nn.DataParallel(classifier)
-
-        if self.config['cuda']:
-            classifier = classifier.cuda()
-
-        return classifier
-
     def _lazy_init_dense(self, input_size, output_size, name='enc_proj'):
         '''initialize the dense linear projection lazily
            because determining convolutional output size
@@ -192,13 +172,13 @@ class AbstractVAE(nn.Module):
                 nn.Linear(input_size, output_size)
             ))
 
-        if self.config['ngpu'] > 1:
-            setattr(self, name,
-                nn.DataParallel(getattr(self, name))
-            )
+            if self.config['ngpu'] > 1:
+                setattr(self, name,
+                        nn.DataParallel(getattr(self, name))
+                )
 
-        if self.config['cuda']:
-            setattr(self, name, getattr(self, name).cuda())
+            if self.config['cuda']:
+                setattr(self, name, getattr(self, name).cuda())
 
     def _lazy_init_relational(self, output_size, name='enc_proj'):
         '''initialize a relational network lazily
@@ -261,13 +241,9 @@ class AbstractVAE(nn.Module):
     def forward(self, x):
         ''' params is a map of the latent variable's parameters'''
         z, params = self.posterior(x)
+        return self.decode(z), params
 
-        if not self.config['disable_classifier']:
-            return self.decode(z), params, self.classifier(x)
-        else:
-            return self.decode(z), params
-
-    def loss_function(self, recon_x, x, params, y_hat= None, y= None, mut_info=None):
+    def loss_function(self, recon_x, x, params, mut_info=None):
         # tf: elbo = -log_likelihood + latent_kl
         # tf: cost = elbo + consistency_kl - self.mutual_info_reg * mutual_info_regularizer
         nll = nll_fn(x, recon_x, self.config['nll_type'])
@@ -289,28 +265,16 @@ class AbstractVAE(nn.Module):
                                                       max=self.config['mut_clamp_value'])
             }
             mut_info = mut_clamp_strategy_map[self.config['mut_clamp_strategy'].strip().lower()](mut_info)
-        if not self.config('disable_classifie'):
-            classification_loss = F.log_softmax(y_hat, y)
-            loss = elbo + classification_loss - mut_info
-            return {
-                'loss': loss,
-                'loss_mean': torch.mean(loss),
-                'elbo_mean': torch.mean(elbo),
-                'nll_mean': torch.mean(nll),
-                'kld_mean': torch.mean(kld),
-                'mut_info_mean': torch.mean(mut_info),
-                'classification_loss_mean': torch.mean(classification_loss)
-            }
-        else:
-            loss = elbo - mut_info
-            return {
-                'loss': loss,
-                'loss_mean': torch.mean(loss),
-                'elbo_mean': torch.mean(elbo),
-                'nll_mean': torch.mean(nll),
-                'kld_mean': torch.mean(kld),
-                'mut_info_mean': torch.mean(mut_info)
-            }
+
+        loss = elbo - mut_info
+        return {
+            'loss': loss,
+            'loss_mean': torch.mean(loss),
+            'elbo_mean': torch.mean(elbo),
+            'nll_mean': torch.mean(nll),
+            'kld_mean': torch.mean(kld),
+            'mut_info_mean': torch.mean(mut_info)
+        }
 
     def has_discrete(self):
         ''' returns True if the model has a discrete

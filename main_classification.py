@@ -9,10 +9,10 @@ import torch.optim as optim
 
 from torch.autograd import Variable
 from copy import deepcopy
-
+from models.vae.parallelly_reparemetrized_vae_classifier import ParallellyReparameterizedVAEClassifier
 from models.vae.parallelly_reparameterized_vae import ParallellyReparameterizedVAE
 from models.vae.sequentially_reparameterized_vae import SequentiallyReparameterizedVAE
-from models.student_teacher import StudentTeacher
+from models.student_teacher_classifier import StudentTeacherClassifier
 from helpers.layers import EarlyStopping, init_weights
 from datasets.loader import get_split_data_loaders, get_loader
 from optimizers.adamnormgrad import AdamNormGrad
@@ -68,8 +68,8 @@ parser.add_argument('--filter-depth', type=int, default=32,
                     help='number of initial conv filter maps (default: 32)')
 parser.add_argument('--reparam-type', type=str, default='isotropic_gaussian',
                     help='isotropic_gaussian, discrete or mixture [default: isotropic_gaussian]')
-parser.add_argument('--layer-type', type=str, default='conv',
-                    help='dense or conv (default: conv)')
+parser.add_argument('--layer-type', type=str, default='dense',
+                    help='dense or conv (default: dense)')
 parser.add_argument('--nll-type', type=str, default='bernoulli',
                     help='bernoulli or gaussian (default: bernoulli)')
 parser.add_argument('--log-interval', type=int, default=10, metavar='N',
@@ -248,7 +248,7 @@ def execute_graph(epoch, model, fisher, data_loader, grapher, optimizer=None, pr
 
         with torch.no_grad() if 'train' not in prefix else dummy_context():
             # run the VAE and extract loss
-            output_map = model(data)
+            output_map = model(data, labels)
             loss_t = model.loss_function(output_map, fisher)
 
         if 'train' in prefix:
@@ -270,7 +270,8 @@ def execute_graph(epoch, model, fisher, data_loader, grapher, optimizer=None, pr
         loss_map['elbo_mean'].item(),
         loss_map['kld_mean'].item(),
         loss_map['nll_mean'].item(),
-        loss_map['mut_info_mean'].item()))
+        loss_map['mut_info_mean'].item(),
+        loss_map['classification_loss_mean'].item()))
 
     # gather scalar values of reparameterizers (if they exist)
     reparam_scalars = model.student.get_reparameterizer_scalars()
@@ -334,14 +335,14 @@ def get_model_and_loader():
                                              kwargs=vars(args))
     elif args.vae_type == 'parallel':
         # Ours: [P(y|x), P(z|x)] --> P(x | z)
-        vae = ParallellyReparameterizedVAE(loaders[0].img_shp,
+        vae = ParallellyReparameterizedVAEClassifier(loaders[0].img_shp, number_labels = 10,
                                            kwargs=vars(args))
     else:
         raise Exception("unknown VAE type requested")
 
     # build the combiner which takes in the VAE as a parameter
     # and projects the latent representation to the output space
-    student_teacher = StudentTeacher(vae, kwargs=vars(args))
+    student_teacher = StudentTeacherClassifier(vae, kwargs=vars(args))
     #student_teacher = init_weights(student_teacher)
 
     # build the grapher object
@@ -356,7 +357,9 @@ def lazy_generate_modules(model, img_shp):
     ''' Super hax, but needed for building lazy modules '''
     model.eval()
     data = float_type(args.cuda)(args.batch_size, *img_shp).normal_()
-    model(Variable(data))
+    labels = float_type(args.cuda)(args.batch_size).normal_()
+    #labels = long_type(self.config['cuda'])(self.student.config['batch_size']).normal_()
+    model(Variable(data), Variable(labels))
 
 
 def test_and_generate(epoch, model, fisher, loader, grapher):
@@ -430,6 +433,7 @@ def train_loop(data_loaders, model, fid_model, grapher, args):
         check_or_create_dir(os.path.join(args.output_dir))
         append_to_csv([test_loss['elbo_mean']], os.path.join(args.output_dir, "{}_test_elbo.csv".format(args.uid)))
         append_to_csv([test_loss['elbo_mean']], os.path.join(args.output_dir, "{}_test_elbo.csv".format(args.uid)))
+        append_to_csv([test_loss['classification_loss_mean']], os.path.join(args.output_dir, "{}_test_elbo.csv".format(args.uid)))
         num_synth_samples = np.ceil(epoch * args.batch_size * model.ratio)
         num_true_samples = np.ceil(epoch * (args.batch_size - (args.batch_size * model.ratio)))
         append_to_csv([num_synth_samples],os.path.join(args.output_dir, "{}_numsynth.csv".format(args.uid)))
@@ -493,7 +497,7 @@ def train_loop(data_loaders, model, fid_model, grapher, args):
 
 
 def _set_model_indices(model, grapher, idx, args):
-    def _init_vae(img_shp, config):
+    def _init_vae(img_shp, number_labels, config):
         if args.vae_type == 'sequential':
             # Sequential : P(y|x) --> P(z|y, x) --> P(x|z)
             # Keep a separate VAE spawn here in case we want
@@ -502,7 +506,7 @@ def _set_model_indices(model, grapher, idx, args):
                                                  **{'kwargs': config})
         elif args.vae_type == 'parallel':
             # Ours: [P(y|x), P(z|x)] --> P(x | z)
-            vae = ParallellyReparameterizedVAE(img_shp,
+            vae = ParallellyReparameterizedVAEClassifier(img_shp, number_labels,
                                                **{'kwargs': config})
         else:
             raise Exception("unknown VAE type requested")

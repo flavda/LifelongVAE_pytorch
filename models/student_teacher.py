@@ -176,13 +176,9 @@ class StudentTeacher(nn.Module):
     def _lifelong_loss_function(self, output_map):
         ''' returns a combined loss of the VAE loss
             + regularizers '''
-
         vae_loss = self.student.loss_function(output_map['student']['x_reconstr_logits'],
                                               output_map['augmented']['data'],
-                                              output_map['student']['params'],
-                                              output_map['student']['y_hat'],
-                                              output_map['augmented']['labels'])
-
+                                              output_map['student']['params'])
         if 'teacher' in output_map and not self.config['disable_regularizers']:
             posterior_regularizer = self.posterior_regularizer(output_map['teacher']['params'],
                                                                output_map['student']['params'])
@@ -199,7 +195,7 @@ class StudentTeacher(nn.Module):
                                          diff,
                                          dim=0,
                                          prepend=True)
-            if self.rnd_perm is not None:  # re-shuffle
+            if self.rnd_perm is not None: # re-shuffle
                 posterior_regularizer = posterior_regularizer[self.rnd_perm]
                 likelihood_regularizer = likelihood_regularizer[self.rnd_perm]
 
@@ -210,7 +206,6 @@ class StudentTeacher(nn.Module):
             vae_loss['likelihood_regularizer_mean'] = torch.mean(likelihood_regularizer)
 
         return vae_loss
-
 
     def _ewc(self, fisher_matrix):
         losses = []
@@ -327,13 +322,6 @@ class StudentTeacher(nn.Module):
         )
         return model.nll_activation(model.generate(z_samples))
 
-    def generate_synthetic_labels(self, model, batch_size, **kwargs):
-        # to generate labels
-        z_samples = model.reparameterizer.prior(
-            batch_size, scale_var=self.config['generative_scale_var'], **kwargs
-        )
-        return F.log_softmax(self.classifier(z_samples))
-
     def generate_synthetic_sequential_samples(self, model, num_rows=8):
         assert model.has_discrete()
 
@@ -358,62 +346,18 @@ class StudentTeacher(nn.Module):
 
             return model.nll_activation(model.generate(z_samples))
 
-    def generate_synthetic_sequential_labels(self, model, num_rows=8):
-        assert model.has_discrete()
-
-        # I don't use it
-        # create a grid of one-hot vectors for displaying in visdom
-        # uses one row for original dimension of discrete component
-        discrete_indices = np.array([np.random.randint(begin, end, size=num_rows) for begin, end in
-                                     zip(range(0, model.reparameterizer.config['discrete_size'],
-                                               self.config['discrete_size']),
-                                         range(self.config['discrete_size'],
-                                               model.reparameterizer.config['discrete_size'] + 1,
-                                               self.config['discrete_size']))])
-        discrete_indices = discrete_indices.reshape(-1)
-        with torch.no_grad():
-            z_samples = Variable(torch.from_numpy(one_hot_np(model.reparameterizer.config['discrete_size'],
-                                                             discrete_indices)))
-            z_samples = z_samples.type(float_type(self.config['cuda']))
-
-            if self.config['reparam_type'] == 'mixture' and self.config['vae_type'] != 'sequential':
-                ''' add in the gaussian prior '''
-                z_gauss = model.reparameterizer.gaussian.prior(z_samples.size(0))
-                z_samples = torch.cat([z_gauss, z_samples], dim=-1)
-
-            return F.log_softmax(self.classifier(z_samples))
-
     def _augment_data(self, x):
-#    def _augment_data(self, x, y= None):
         ''' return batch_size worth of samples that are augmented
             from the teacher model '''
-
         if self.ratio == 1.0 or not self.training or self.config['disable_augmentation']:
-            return x # base case
-#   If I give y _augment_data(self, x, y= None) I have also to give it to the forward function
-#   not self.training: we are ok duiring test we dont give y
-#   self.config['disable_augmentation']: hmm we use this for ewc, think about it
-
-#            if not self.config('disable_classifier'):
-#                return x, y    # base case
-#            else:
-#                return x
+            return x   # base case
 
         batch_size = x.size(0)
         self.num_teacher_samples = int(batch_size * self.ratio)
         self.num_student_samples = max(batch_size - self.num_teacher_samples, 1)
         generated_teacher_samples = self.generate_synthetic_samples(self.teacher, batch_size)
-        generated_teacher_labels = \
-            self.generate_synthetic_labels(self.teacher, batch_size) if not self.config('disable_classifier') else None
-
-        merged_x =  torch.cat([x[0:self.num_student_samples],
+        merged =  torch.cat([x[0:self.num_student_samples],
                              generated_teacher_samples[0:self.num_teacher_samples]], 0)
-
-
-        merged_y =  torch.cat([y[0:self.num_student_samples],
-                               generated_teacher_labels[0:self.num_teacher_samples]], 0) \
-            if not self.config('disable_classifier') else None
-
 
         # workaround for batchnorm on multiple GPUs
         # we shuffle the data and unshuffle it later for
@@ -423,44 +367,26 @@ class StudentTeacher(nn.Module):
             if self.config['cuda']:
                 self.rnd_perm = self.rnd_perm.cuda()
 
-            return merged_x[self.rnd_perm], merged_y[self.rnd_perm] if not self.config('disable_classifier') else merged_x[self.rnd_perm]
+            return merged[self.rnd_perm]
         else:
-
-            return merged_x, merged_y if not self.config('disable_classifier') else merged_x
-
-
+            return merged
 
 
     def forward(self, x):
-
-        if not self.config('disable_classifier'):
-#         x_augmented, y_augmented = self._augment_data(x,y).contiguous()
-            x_augmented, y_augmented = self._augment_data(x ).contiguous()
-            x_recon_student, params_student = self.student(x_augmented)
-            x_reconstr_student_activated = self.student.nll_activation(x_recon_student)
-            _, q_z_given_xhat = self.student.posterior(x_reconstr_student_activated)
-            params_student['q_z_given_xhat'] = q_z_given_xhat
-            y_hat_student = self.student.classify(x_augmented)
-#            y_hat_student_activated = F.log_softmax(y_hat_student)
-
-        else:
-            x_augmented = self._augment_data(x).contiguous()
-            x_recon_student, params_student = self.student(x_augmented)
-            x_reconstr_student_activated = self.student.nll_activation(x_recon_student)
-            _, q_z_given_xhat = self.student.posterior(x_reconstr_student_activated)
-            params_student['q_z_given_xhat'] = q_z_given_xhat
-
+        x_augmented = self._augment_data(x).contiguous()
+        x_recon_student, params_student = self.student(x_augmented)
+        x_reconstr_student_activated = self.student.nll_activation(x_recon_student)
+        _, q_z_given_xhat = self.student.posterior(x_reconstr_student_activated)
+        params_student['q_z_given_xhat'] = q_z_given_xhat
 
         ret_map = {
             'student':{
                 'params': params_student,
                 'x_reconstr': self.student.nll_activation(x_recon_student),
-                'x_reconstr_logits': x_recon_student,
-                'y_hat': F.log_softmax(y_hat_student) if not self.config('disable_classifier') else None,
+                'x_reconstr_logits': x_recon_student
             },
             'augmented': {
                 'data': x_augmented,
-                'labels' : y_augmented  if not self.config('disable_classifier') else None,
                 'num_student': self.num_student_samples,
                 'num_teacher': self.num_teacher_samples
             }
@@ -480,5 +406,3 @@ class StudentTeacher(nn.Module):
             }
 
         return ret_map
-
-

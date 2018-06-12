@@ -33,10 +33,9 @@ class ParallellyReparameterizedVAE(AbstractVAE):
         else:
             raise Exception("unknown reparameterization type")
 
-        # build the encoder, decoder and classifier
+        # build the encoder and decoder
         self.encoder = self.build_encoder()
         self.decoder = self.build_decoder()
-        self.classifier = self.build_classifier()
 
     def get_name(self):
         if self.config['reparam_type'] == "mixture":
@@ -119,10 +118,8 @@ class ParallellyReparameterizedVAE(AbstractVAE):
 
         return mut_info
 
-
-
     def loss_function(self, recon_x, x, params):
         ''' evaluates the loss of the model '''
         mut_info = self.mut_info(params)
-
-        return super(ParallellyReparameterizedVAE,self).loss_function(recon_x, x, params, mut_info=mut_info)
+        return super(ParallellyReparameterizedVAE, self).loss_function(recon_x, x, params,
+                                                                       mut_info=mut_info)

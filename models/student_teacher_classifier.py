@@ -8,13 +8,18 @@ import torch.distributions as D
 from torch.autograd import Variable
 from copy import deepcopy
 
+
 from helpers.distributions import nll
 from helpers.utils import expand_dims, long_type, squeeze_expand_dim, \
     ones_like, float_type, pad, inv_perm, one_hot_np, \
     zero_pad_smaller_cat, check_or_create_dir
+from models.vae.parallelly_reparameterized_vae import ParallellyReparameterizedVAE
+from models.vae.sequentially_reparameterized_vae import SequentiallyReparameterizedVAE
+
 from models.vae.parallelly_reparemetrized_vae_classifier import ParallellyReparameterizedVAEClassifier
-#from models.vae.sequentially_reparameterized_vae import SequentiallyReparameterizedVAE
 from models.student_teacher import StudentTeacher
+
+
 
 def detach_from_graph(param_map):
     for _, v in param_map.items():
@@ -64,18 +69,20 @@ def kl_isotropic_gauss_gauss(dist_a, dist_b, rnd_perm, from_index=0):
     return torch.sum(D.kl_divergence(n0, n1), dim=-1)
 
 
-def lazy_generate_modules(model, img_shp, batch_size, cuda):
+def lazy_generate_modules_class(model, img_shp, batch_size, cuda):
     ''' Super hax, but needed for building lazy modules '''
     model.eval()
     data = float_type(cuda)(batch_size, *img_shp).normal_()
-    labels = long_type(self.config['cuda'])(self.student.config['batch_size']).normal_()
+    labels = long_type(self.config['cuda'])(self.student.config['batch_size'])
+ #   labels = long_type(self.config['cuda'])(self.student.config['batch_size']).normal_()
+
     model(Variable(data), Variable(labels))
 
 
 class StudentTeacherClassifier(StudentTeacher):
     def __init__(self, initial_model, **kwargs):
         ''' Helper to keep the student-teacher architecture '''
-        super(StudentTeacherClassifier, self).__init__(initial_model)
+        super(StudentTeacherClassifier, self).__init__(initial_model, **kwargs)
         self.teacher = None
         self.student = initial_model
         self.current_model = 0
@@ -85,8 +92,23 @@ class StudentTeacherClassifier(StudentTeacher):
         self.num_student_samples = None
 
         # grab the meta config and print for
-      #  self.config = kwargs['kwargs']
+        self.config = kwargs['kwargs']
 
+    def load(self):
+        # load the model if it exists
+        if os.path.isdir(self.config['model_dir']):
+            model_filename = os.path.join(self.config['model_dir'], self.get_name() + ".th")
+            if os.path.isfile(model_filename):
+                print("loading existing student-teacher model: {}".format(model_filename))
+                lazy_generate_modules_class(self, self.student.input_shape,
+                                      self.config['batch_size'],
+                                      self.config['cuda'])
+                self.load_state_dict(torch.load(model_filename), strict=True)
+                return True
+            else:
+                print("{} does not exist...".format(model_filename))
+
+        return False
 
     def _lifelong_loss_function_with_classifier(self, output_map):
         ''' returns a combined loss of the VAE loss
@@ -95,7 +117,7 @@ class StudentTeacherClassifier(StudentTeacher):
         vae_loss = self.student.loss_function(output_map['student']['x_reconstr_logits'],
                                               output_map['augmented']['data'],
                                               output_map['student']['params'],
-                                              output_map['student']['y_hat'],
+                                              output_map['student']['y_hat_logits'],
                                               output_map['augmented']['labels'])
 
         if 'teacher' in output_map and not self.config['disable_regularizers']:
@@ -154,7 +176,7 @@ class StudentTeacherClassifier(StudentTeacher):
         vae_loss = self.student.loss_function(output_map['student']['x_reconstr_logits'],
                                               output_map['augmented']['data'],
                                               output_map['student']['params'],
-                                              output_map['student']['y_hat'],
+                                              output_map['student']['y_hat_logits'],
                                               output_map['augmented']['labels'])
         if 'teacher' in output_map and fisher_matrix is not None:
             ewc = self._ewc(fisher_matrix)
@@ -174,7 +196,7 @@ class StudentTeacherClassifier(StudentTeacher):
     def disable_bn(module):
         for layer in module.children():
             if isinstance(layer, (nn.Sequential, nn.ModuleList)):
-                StudentTeacher.disable_bn(layer)
+                StudentTeacherClassifier.disable_bn(layer)
             elif isinstance(layer, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
                 print("reseting {} parameters".format(layer))
                 layer.reset_parameters()
@@ -192,7 +214,7 @@ class StudentTeacherClassifier(StudentTeacher):
 
         # reset batch norm layers
         if reset_dest_bn:
-            StudentTeacher.disable_bn(dest)
+            StudentTeacherClassifier.disable_bn(dest)
 
         return [src, dest]
 
@@ -223,8 +245,10 @@ class StudentTeacherClassifier(StudentTeacher):
         # forward pass once to build lazy modules
         data = float_type(self.config['cuda'])(self.student.config['batch_size'],
                                                *self.student.input_shape).normal_()
+        labels = long_type(self.config['cuda'])(self.student.config['batch_size'] )
 
-        labels = long_type(self.config['cuda'])(self.student.config['batch_size'] ).normal_()
+
+        #labels = long_type(self.config['cuda'])(self.student.config['batch_size'] ).normal_()
 
         self.student(Variable(data), Variable(labels))
 
@@ -246,9 +270,10 @@ class StudentTeacherClassifier(StudentTeacher):
     def generate_synthetic_labels(self, model, batch_size, **kwargs):
         # to generate labels
         z_samples = model.reparameterizer.prior(
-            batch_size, scale_var=self.config['generative_scale_var'], **kwargs
-        )
-        return F.log_softmax(self.classifier(z_samples))
+            batch_size, scale_var=self.config['generative_scale_var'], **kwargs)
+        # if I don't use torch.argmax the output's size is (150, 10)
+        return torch.argmax(F.log_softmax(model.classify(z_samples)), 1)
+    #    return long_type(self.config['cuda'])(F.log_softmax(model.classifier(z_samples)))
 
 
     def generate_synthetic_sequential_labels(self, model, num_rows=8):
@@ -293,9 +318,13 @@ class StudentTeacherClassifier(StudentTeacher):
 
         merged_x =  torch.cat([x[0:self.num_student_samples],
                              generated_teacher_samples[0:self.num_teacher_samples]], 0)
+      #  print(y[0:self.num_student_samples].size())
+      #  print(generated_teacher_labels[0:self.num_teacher_samples].size())
 
+        merged_y = torch.cat([y[0:self.num_student_samples], generated_teacher_labels[0:self.num_teacher_samples]], 0)
 
-        merged_y =  torch.cat([y[0:self.num_student_samples], generated_teacher_labels[0:self.num_teacher_samples]], 0)
+       # merged_y =  torch.cat(torch.autograd.Variable([y[0:self.num_student_samples],
+         #                      generated_teacher_labels[0:self.num_teacher_samples]]), 0)
 
         # workaround for batchnorm on multiple GPUs
         # we shuffle the data and unshuffle it later for
@@ -320,12 +349,15 @@ class StudentTeacherClassifier(StudentTeacher):
 
     def forward(self, x, y):
 
-        x_augmented, y_augmented = self._augment_data(x, y).contiguous()
-        x_recon_student, params_student = self.student(x_augmented)
+    #    x_augmented, y_augmented = self._augment_data(x, y).contiguous()
+        x_augmented, y_augmented = self._augment_data(x, y)
+        x_augmented = x_augmented.contiguous()
+        y_augmented = y_augmented.contiguous()
+        x_recon_student, params_student, y_hat_student = self.student(x_augmented, y_augmented)
         x_reconstr_student_activated = self.student.nll_activation(x_recon_student)
         _, q_z_given_xhat = self.student.posterior(x_reconstr_student_activated)
         params_student['q_z_given_xhat'] = q_z_given_xhat
-        y_hat_student = self.student.classify(x_augmented)
+        #y_hat_student = self.student.classify(x_augmented)
 #            y_hat_student_activated = F.log_softmax(y_hat_student)
 
 
@@ -335,7 +367,9 @@ class StudentTeacherClassifier(StudentTeacher):
                 'params': params_student,
                 'x_reconstr': self.student.nll_activation(x_recon_student),
                 'x_reconstr_logits': x_recon_student,
-                'y_hat': F.log_softmax(y_hat_student)
+                'y_hat': F.log_softmax(y_hat_student),
+                'y_hat_logits': y_hat_student
+
             },
             'augmented': {
                 'data': x_augmented,
@@ -350,12 +384,15 @@ class StudentTeacherClassifier(StudentTeacher):
             # only teacher Q(z|x) is needed, so dont run decode step
             self.teacher.eval()
             #_, params_teacher = self.teacher.posterior(x_augmented)
-            x_recon_teacher, params_teacher = self.teacher(x_augmented)
+            x_recon_teacher, params_teacher, y_hat_teacher = self.teacher(x_augmented, y_augmented)
             # detach_from_graph(params_teacher)
             ret_map['teacher']= {
                 'params': params_teacher,
                 'x_reconstr': self.teacher.nll_activation(x_recon_teacher),
-                'x_reconstr_logits': x_recon_teacher
+                'x_reconstr_logits': x_recon_teacher,
+                'y_hat': F.log_softmax(y_hat_teacher),
+                'y_hat_logits': F.log_softmax(y_hat_teacher)
+
             }
 
         return ret_map

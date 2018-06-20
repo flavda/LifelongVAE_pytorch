@@ -19,9 +19,10 @@ from optimizers.adamnormgrad import AdamNormGrad
 from helpers.grapher import Grapher
 from helpers.fid import train_fid_model
 from helpers.metrics import calculate_consistency, calculate_fid, estimate_fisher
+from helpers.metrics_class import calculate_consistency_class, estimate_fisher_class
 from helpers.utils import float_type, ones_like, \
     append_to_csv, num_samples_in_loader, check_or_create_dir, \
-    dummy_context, number_of_parameters
+    dummy_context, number_of_parameters, long_type
 
 parser = argparse.ArgumentParser(description='LifeLong VAE Pytorch')
 
@@ -239,7 +240,8 @@ def execute_graph(epoch, model, fisher, data_loader, grapher, optimizer=None, pr
 
     for data, labels in data_loader:
         data = Variable(data).cuda() if args.cuda else Variable(data)
-        label = Variable(label).cuda() if args.cuda else Variable(label)
+        labels = Variable(labels).cuda() if args.cuda else Variable(labels)
+
 
         if 'train' in prefix:
             # zero gradients on optimizer
@@ -264,7 +266,7 @@ def execute_graph(epoch, model, fisher, data_loader, grapher, optimizer=None, pr
             num_samples += data.size(0)
 
     loss_map = _mean_map(loss_map) # reduce the map to get actual means
-    print('{}[Epoch {}][{} samples]: Average loss: {:.4f}\tELBO: {:.4f}\tKLD: {:.4f}\tNLL: {:.4f}\tMut: {:.4f}'.format(
+    print('{}[Epoch {}][{} samples]: Average loss: {:.4f}\tELBO: {:.4f}\tKLD: {:.4f}\tNLL: {:.4f}\tMut: {:.4f} \tClassif: {:.4f}'.format(
         prefix, epoch, num_samples,
         loss_map['loss_mean'].item(),
         loss_map['elbo_mean'].item(),
@@ -286,7 +288,8 @@ def execute_graph(epoch, model, fisher, data_loader, grapher, optimizer=None, pr
 
     # return this for early stopping
     loss_val = {'loss_mean': loss_map['loss_mean'].detach().item(),
-                'elbo_mean': loss_map['elbo_mean'].detach().item()}
+                'elbo_mean': loss_map['elbo_mean'].detach().item(),
+                'classification_loss_mean': loss_map['classification_loss_mean'].detach().item()}
     loss_map.clear()
     params.clear()
     return loss_val
@@ -335,7 +338,7 @@ def get_model_and_loader():
                                              kwargs=vars(args))
     elif args.vae_type == 'parallel':
         # Ours: [P(y|x), P(z|x)] --> P(x | z)
-        vae = ParallellyReparameterizedVAEClassifier(loaders[0].img_shp, number_labels = 10,
+        vae = ParallellyReparameterizedVAEClassifier(loaders[0].img_shp, output_size = 10,
                                            kwargs=vars(args))
     else:
         raise Exception("unknown VAE type requested")
@@ -357,7 +360,9 @@ def lazy_generate_modules(model, img_shp):
     ''' Super hax, but needed for building lazy modules '''
     model.eval()
     data = float_type(args.cuda)(args.batch_size, *img_shp).normal_()
-    labels = float_type(args.cuda)(args.batch_size).normal_()
+    labels = long_type(args.cuda)(args.batch_size)
+ #   labels = long_type(args.cuda)(args.batch_size).normal_()
+
     #labels = long_type(self.config['cuda'])(self.student.config['batch_size']).normal_()
     model(Variable(data), Variable(labels))
 
@@ -380,7 +385,9 @@ def eval_model(data_loaders, model, fid_model, args):
         # evaluate and save away one-time metrics
         check_or_create_dir(os.path.join(args.output_dir))
         append_to_csv([test_loss['elbo_mean']], os.path.join(args.output_dir, "{}_test_elbo.csv".format(args.uid)))
-        append_to_csv(calculate_consistency(model, loader, args.reparam_type, args.vae_type, args.cuda),
+        append_to_csv([test_loss['classification_loss_mean']],
+                      os.path.join(args.output_dir, "{}_test_classif.csv".format(args.uid)))
+        append_to_csv(calculate_consistency_class(model, loader, args.reparam_type, args.vae_type, args.cuda),
                       os.path.join(args.output_dir, "{}_consistency.csv".format(args.uid)))
         with open(os.path.join(args.output_dir, "{}_conf.json".format(args.uid)), 'w') as f:
             json.dump(model.student.config, f)
@@ -432,8 +439,7 @@ def train_loop(data_loaders, model, fid_model, grapher, args):
         #    5. dump config to visdom
         check_or_create_dir(os.path.join(args.output_dir))
         append_to_csv([test_loss['elbo_mean']], os.path.join(args.output_dir, "{}_test_elbo.csv".format(args.uid)))
-        append_to_csv([test_loss['elbo_mean']], os.path.join(args.output_dir, "{}_test_elbo.csv".format(args.uid)))
-        append_to_csv([test_loss['classification_loss_mean']], os.path.join(args.output_dir, "{}_test_elbo.csv".format(args.uid)))
+        append_to_csv([test_loss['classification_loss_mean']], os.path.join(args.output_dir, "{}_test_classif.csv".format(args.uid)))
         num_synth_samples = np.ceil(epoch * args.batch_size * model.ratio)
         num_true_samples = np.ceil(epoch * (args.batch_size - (args.batch_size * model.ratio)))
         append_to_csv([num_synth_samples],os.path.join(args.output_dir, "{}_numsynth.csv".format(args.uid)))
@@ -446,7 +452,7 @@ def train_loop(data_loaders, model, fid_model, grapher, args):
 
         # calc the consistency using the **PREVIOUS** loader
         if j > 0:
-            append_to_csv(calculate_consistency(model, data_loaders[j - 1], args.reparam_type, args.vae_type, args.cuda),
+            append_to_csv(calculate_consistency_class(model, data_loaders[j - 1], args.reparam_type, args.vae_type, args.cuda),
                           os.path.join(args.output_dir, "{}_consistency.csv".format(args.uid)))
 
 
@@ -465,7 +471,7 @@ def train_loop(data_loaders, model, fid_model, grapher, args):
             if args.ewc_gamma > 0:
                 # calculate the fisher from the previous data loader
                 print("computing fisher info matrix....")
-                fisher_tmp = estimate_fisher(model.student, # this is pre-fork
+                fisher_tmp = estimate_fisher_class(model.student, # this is pre-fork
                                              loader, args.batch_size,
                                              cuda=args.cuda)
                 if fisher is not None:
@@ -497,7 +503,7 @@ def train_loop(data_loaders, model, fid_model, grapher, args):
 
 
 def _set_model_indices(model, grapher, idx, args):
-    def _init_vae(img_shp, number_labels, config):
+    def _init_vae(img_shp, output_size, config):
         if args.vae_type == 'sequential':
             # Sequential : P(y|x) --> P(z|y, x) --> P(x|z)
             # Keep a separate VAE spawn here in case we want
@@ -506,7 +512,7 @@ def _set_model_indices(model, grapher, idx, args):
                                                  **{'kwargs': config})
         elif args.vae_type == 'parallel':
             # Ours: [P(y|x), P(z|x)] --> P(x | z)
-            vae = ParallellyReparameterizedVAEClassifier(img_shp, number_labels,
+            vae = ParallellyReparameterizedVAEClassifier(img_shp, output_size,
                                                **{'kwargs': config})
         else:
             raise Exception("unknown VAE type requested")

@@ -132,10 +132,10 @@ parser.add_argument('--ewc-gamma', type=float, default=0,
                     help='any value greater than 0 enables EWC with this hyper-parameter (default: 0)')
 
 # Visdom parameters
-parser.add_argument('--visdom-url', type=str, default="http://localhost",
-                    help='visdom URL for graphs (default: http://localhost)')
-parser.add_argument('--visdom-port', type=int, default="8097",
-                    help='visdom port for graphs (default: 8097)')
+#parser.add_argument('--visdom-url', type=str, default="http://localhost",
+#                    help='visdom URL for graphs (default: http://localhost)')
+#parser.add_argument('--visdom-port', type=int, default="8097",
+#                    help='visdom port for graphs (default: 8097)')
 
 # Device parameters
 parser.add_argument('--seed', type=int, default=None,
@@ -171,28 +171,28 @@ def build_optimizer(model):
     )
 
 
-def register_plots(loss, grapher, epoch, prefix='train'):
+def register_plots(loss, epoch, prefix='train'):
     for k, v in loss.items():
         if isinstance(v, map):
-            register_plots(loss[k], grapher, epoch, prefix=prefix)
+            register_plots(loss[k], epoch, prefix=prefix)
 
         if 'mean' in k or 'scalar' in k:
             key_name = k.split('_')[0]
             value = v.item() if not isinstance(v, (float, np.float32, np.float64)) else v
-            grapher.register_single({'%s_%s' % (prefix, key_name): [[epoch], [value]]},
-                                    plot_type='line')
+            # grapher.register_single({'%s_%s' % (prefix, key_name): [[epoch], [value]]},
+            #                         plot_type='line')
 
 
-def register_images(images, names, grapher, prefix="train"):
+def register_images(images, names, prefix="train"):
     ''' helper to register a list of images '''
     if isinstance(images, list):
         assert len(images) == len(names)
         for im, name in zip(images, names):
-            register_images(im, name, grapher, prefix=prefix)
+            register_images(im, name, prefix=prefix)
     else:
         images = torch.min(images.detach(), ones_like(images))
-        grapher.register_single({'{}_{}'.format(prefix, names): images},
-                                plot_type='imgs')
+        # grapher.register_single({'{}_{}'.format(prefix, names): images},
+        #                         plot_type='imgs')
 
 
 def _add_loss_map(loss_tm1, loss_t):
@@ -221,21 +221,21 @@ def _mean_map(loss_map):
     return loss_map
 
 
-def train(epoch, model, fisher, optimizer, loader, grapher, prefix='train'):
+def train(epoch, model, fisher, optimizer, loader, prefix='train'):
     ''' train loop helper '''
     return execute_graph(epoch=epoch, model=model, fisher=fisher,
-                         data_loader=loader, grapher=grapher,
+                         data_loader=loader,
                          optimizer=optimizer, prefix='train')
 
 
-def test(epoch, model, fisher, loader, grapher, prefix='test'):
+def test(epoch, model, fisher, loader, prefix='test'):
      ''' test loop helper '''
      return execute_graph(epoch, model=model, fisher=fisher,
-                          data_loader=loader, grapher=grapher,
+                          data_loader=loader,
                           optimizer=None, prefix='test')
 
 
-def execute_graph(epoch, model, fisher, data_loader, grapher, optimizer=None, prefix='test'):
+def execute_graph(epoch, model, fisher, data_loader, optimizer=None, prefix='test'):
     ''' execute the graph; when 'train' is in the name the model runs the optimizer '''
     model.eval() if not 'train' in prefix else model.train()
     assert optimizer is not None if 'train' in prefix else optimizer is None
@@ -288,12 +288,12 @@ def execute_graph(epoch, model, fisher, data_loader, grapher, optimizer=None, pr
     reparam_scalars = model.student.get_reparameterizer_scalars()
 
     # plot the test accuracy, loss and images
-    if grapher: # only if grapher is not None
-        register_plots({**loss_map, **reparam_scalars}, grapher, epoch=epoch, prefix=prefix)
-        images = [output_map['augmented']['data'], output_map['student']['x_reconstr']]
-        img_names = ['original_imgs', 'vae_reconstructions']
-        register_images(images, img_names, grapher, prefix=prefix)
-        grapher.show()
+    # if grapher: # only if grapher is not None
+    #     register_plots({**loss_map, **reparam_scalars}, grapher, epoch=epoch, prefix=prefix)
+    #     images = [output_map['augmented']['data'], output_map['student']['x_reconstr']]
+    #     img_names = ['original_imgs', 'vae_reconstructions']
+    #     register_images(images, img_names, grapher, prefix=prefix)
+    #     grapher.show()
 
     # return this for early stopping
     loss_val = {'loss_mean': loss_map['loss_mean'].detach().item(),
@@ -305,7 +305,7 @@ def execute_graph(epoch, model, fisher, data_loader, grapher, optimizer=None, pr
     return loss_val
 
 
-def generate(student_teacher, grapher, name='teacher'):
+def generate(student_teacher, name='teacher'):
     model = {
         'teacher': student_teacher.teacher,
         'student': student_teacher.student
@@ -317,13 +317,13 @@ def generate(student_teacher, grapher, name='teacher'):
         gen = student_teacher.generate_synthetic_samples(model[name],
                                                          args.batch_size)
         gen = torch.min(gen, ones_like(gen))
-        grapher.register_single({'generated_%s'%name: gen}, plot_type='imgs')
+    #    grapher.register_single({'generated_%s'%name: gen}, plot_type='imgs')
 
         # sequential generation for discrete and mixture reparameterizations
         if args.reparam_type == 'mixture' or args.reparam_type == 'discrete':
             gen = student_teacher.generate_synthetic_sequential_samples(model[name]).detach()
             gen = torch.min(gen, ones_like(gen))
-            grapher.register_single({'sequential_generated_%s'%name: gen}, plot_type='imgs')
+     #       grapher.register_single({'sequential_generated_%s'%name: gen}, plot_type='imgs')
 
 
 def get_model_and_loader():
@@ -359,11 +359,12 @@ def get_model_and_loader():
     #student_teacher = init_weights(student_teacher)
 
     # build the grapher object
-    grapher = Grapher(env=student_teacher.get_name(),
-                      server=args.visdom_url,
-                      port=args.visdom_port)
-
-    return [student_teacher, loaders, grapher]
+    # grapher = Grapher(env=student_teacher.get_name(),
+    #                   server=args.visdom_url,
+    #                   port=args.visdom_port)
+    #
+    #return [student_teacher, loaders, grapher]
+    return [student_teacher, loaders]
 
 
 def lazy_generate_modules(model, img_shp):
@@ -377,12 +378,12 @@ def lazy_generate_modules(model, img_shp):
     model(Variable(data), Variable(labels))
 
 
-def test_and_generate(epoch, model, fisher, loader, grapher):
+def test_and_generate(epoch, model, fisher, loader):
     test_loss = test(epoch=epoch, model=model,
-                     fisher=fisher, loader=loader.test_loader,
-                     grapher=grapher, prefix='test')
-    generate(model, grapher, 'student') # generate student samples
-    generate(model, grapher, 'teacher') # generate teacher samples
+                     fisher=fisher, loader=loader.test_loader, prefix='test')
+
+    generate(model, 'student') # generate student samples
+    generate(model, 'teacher') # generate teacher samples
     return test_loss
 
 
@@ -390,7 +391,7 @@ def eval_model(data_loaders, model, fid_model, args):
     ''' simple helper to evaluate the model over all the loaders'''
     for loader in data_loaders:
         test_loss = test(epoch=-1, model=model, fisher=None,
-                         loader=loader.test_loader, grapher=None, prefix='test')
+                         loader=loader.test_loader, prefix='test')
 
         # evaluate and save away one-time metrics
         check_or_create_dir(os.path.join(args.output_dir))
@@ -408,13 +409,13 @@ def eval_model(data_loaders, model, fid_model, args):
             num_fid_samples = 4000 if args.calculate_fid_with != 'inceptionv3' else 1000
             append_to_csv(calculate_fid(fid_model=fid_model,
                                         model=model,
-                                        loader=loader, grapher=None,
+                                        loader=loader,
                                         num_samples=num_fid_samples,
                                         cuda=args.cuda),
                           os.path.join(args.output_dir, "{}_fid.csv".format(args.uid)))
 
 
-def train_loop(data_loaders, model, fid_model, grapher, args):
+def train_loop(data_loaders, model, fid_model, args):
     ''' simple helper to run the entire train loop; not needed for eval modes'''
     optimizer = build_optimizer(model.student)     # collect our optimizer
     print("there are {} params with {} elems in the st-model and {} params in the student with {} elems".format(
@@ -433,16 +434,40 @@ def train_loop(data_loaders, model, fid_model, grapher, args):
                               #burn_in_interval=int(num_epochs*0.2)) if args.early_stop else None
 
         test_loss = None
+        train_loss = None
         for epoch in range(1, num_epochs + 1):
-            train(epoch, model, fisher, optimizer, loader.train_loader, grapher)
-            test_loss = test(epoch, model, fisher, loader.test_loader, grapher)
+        #    train(epoch, model, fisher, optimizer, loader.train_loader)
+            train_loss = train(epoch, model, fisher, optimizer, loader.train_loader)
+            test_loss = test(epoch, model, fisher, loader.test_loader)
             if args.early_stop and early(test_loss['loss_mean']):
                 early.restore() # restore and test+generate again
-                test_loss = test_and_generate(epoch, model, fisher, loader, grapher)
+                test_loss = test_and_generate(epoch, model, fisher, loader)
                 break
 
-            generate(model, grapher, 'student') # generate student samples
-            generate(model, grapher, 'teacher') # generate teacher samples
+            generate(model, 'student') # generate student samples
+            generate(model, 'teacher') # generate teacher samples
+
+
+            check_or_create_dir(os.path.join(args.output_dir))
+            append_to_csv([test_loss['elbo_mean']], os.path.join(args.output_dir, "{}_test_elbo_epochs.csv".format(args.uid)))
+            append_to_csv([test_loss['classification_loss_mean']], os.path.join(args.output_dir, "{}_test_classif_epochs.csv".format(args.uid)))
+            append_to_csv([test_loss['accuracy_mean']], os.path.join(args.output_dir, "{}_test_accuracy_epochs.csv".format(args.uid)))
+            append_to_csv([train_loss['elbo_mean']],
+                          os.path.join(args.output_dir, "{}_train_elbo_epochs.csv".format(args.uid)))
+            append_to_csv([train_loss['classification_loss_mean']],
+                          os.path.join(args.output_dir, "{}_test_classif_epochs.csv".format(args.uid)))
+            append_to_csv([train_loss['accuracy_mean']],
+                          os.path.join(args.output_dir, "{}_train_accuracy_epochs.csv".format(args.uid)))
+
+            num_synth_samples = np.ceil(epoch * args.batch_size * model.ratio)
+            num_true_samples = np.ceil(epoch * (args.batch_size - (args.batch_size * model.ratio)))
+            append_to_csv([num_synth_samples],os.path.join(args.output_dir, "{}_numsynth_epochs.csv".format(args.uid)))
+            append_to_csv([num_true_samples], os.path.join(args.output_dir, "{}_numtrue_epochs.csv".format(args.uid)))
+            append_to_csv([epoch], os.path.join(args.output_dir, "{}_epochs_epochs.csv".format(args.uid)))
+            # grapher.vis.text(num_synth_samples, opts=dict(title="num_synthetic_samples"))
+            # grapher.vis.text(num_true_samples, opts=dict(title="num_true_samples"))
+            # grapher.vis.text(pprint.PrettyPrinter(indent=4).pformat(model.student.config),
+            #                  opts=dict(title="config"))
 
         # evaluate and save away one-time metrics, these include:
         #    1. test elbo
@@ -453,16 +478,19 @@ def train_loop(data_loaders, model, fid_model, grapher, args):
         check_or_create_dir(os.path.join(args.output_dir))
         append_to_csv([test_loss['elbo_mean']], os.path.join(args.output_dir, "{}_test_elbo.csv".format(args.uid)))
         append_to_csv([test_loss['classification_loss_mean']], os.path.join(args.output_dir, "{}_test_classif.csv".format(args.uid)))
-        append_to_csv([test_loss['accuracy_mean']], os.path.join(args.output_dir, "{}_test_accuracy.csv".format(args.uid)))
+        append_to_csv([test_loss['accuracy_mean']], os.path.join(args.output_dir, "{}_train_accuracy.csv".format(args.uid)))
+        append_to_csv([train_loss['elbo_mean']], os.path.join(args.output_dir, "{}_train_elbo.csv".format(args.uid)))
+        append_to_csv([train_loss['classification_loss_mean']], os.path.join(args.output_dir, "{}_test_classif.csv".format(args.uid)))
+        append_to_csv([train_loss['accuracy_mean']], os.path.join(args.output_dir, "{}_train_accuracy.csv".format(args.uid)))
         num_synth_samples = np.ceil(epoch * args.batch_size * model.ratio)
         num_true_samples = np.ceil(epoch * (args.batch_size - (args.batch_size * model.ratio)))
         append_to_csv([num_synth_samples],os.path.join(args.output_dir, "{}_numsynth.csv".format(args.uid)))
         append_to_csv([num_true_samples], os.path.join(args.output_dir, "{}_numtrue.csv".format(args.uid)))
         append_to_csv([epoch], os.path.join(args.output_dir, "{}_epochs.csv".format(args.uid)))
-        grapher.vis.text(num_synth_samples, opts=dict(title="num_synthetic_samples"))
-        grapher.vis.text(num_true_samples, opts=dict(title="num_true_samples"))
-        grapher.vis.text(pprint.PrettyPrinter(indent=4).pformat(model.student.config),
-                         opts=dict(title="config"))
+        # grapher.vis.text(num_synth_samples, opts=dict(title="num_synthetic_samples"))
+        # grapher.vis.text(num_true_samples, opts=dict(title="num_true_samples"))
+        # grapher.vis.text(pprint.PrettyPrinter(indent=4).pformat(model.student.config),
+        #                  opts=dict(title="config"))
 
         # calc the consistency using the **PREVIOUS** loader
         if j > 0:
@@ -475,12 +503,12 @@ def train_loop(data_loaders, model, fid_model, grapher, args):
             num_fid_samples = 4000 if args.calculate_fid_with != 'inceptionv3' else 1000
             append_to_csv(calculate_fid(fid_model=fid_model,
                                         model=model,
-                                        loader=loader, grapher=grapher,
+                                        loader=loader,
                                         num_samples=num_fid_samples,
                                         cuda=args.cuda),
                           os.path.join(args.output_dir, "{}_fid.csv".format(args.uid)))
 
-        grapher.save() # save the remote visdom graphs
+       # grapher.save() # save the remote visdom graphs
         if j != len(data_loaders) - 1:
             if args.ewc_gamma > 0:
                 # calculate the fisher from the previous data loader
@@ -511,12 +539,12 @@ def train_loop(data_loaders, model, fid_model, grapher, args):
                 # so that we can have a separate visdom env
                 model.current_model += 1
 
-            grapher = Grapher(env=model.get_name(),
-                              server=args.visdom_url,
-                              port=args.visdom_port)
+            # grapher = Grapher(env=model.get_name(),
+            #                   server=args.visdom_url,
+            #                   port=args.visdom_port)
 
 
-def _set_model_indices(model, grapher, idx, args):
+def _set_model_indices(model, idx, args):
     def _init_vae(img_shp, output_size, config):
         if args.vae_type == 'sequential':
             # Sequential : P(y|x) --> P(z|y, x) --> P(x|z)
@@ -553,16 +581,16 @@ def _set_model_indices(model, grapher, idx, args):
                 model.teacher = _init_vae(model.student.input_shape, config_teacher)
 
         # re-init grapher
-        grapher = Grapher(env=model.get_name(),
-                          server=args.visdom_url,
-                          port=args.visdom_port)
+        # grapher = Grapher(env=model.get_name(),
+        #                   server=args.visdom_url,
+        #                   port=args.visdom_port)
 
-    return model, grapher
+    return model
 
 
 def run(args):
     # collect our model and data loader
-    model, data_loaders, grapher = get_model_and_loader()
+    model, data_loaders = get_model_and_loader()
 
     # since some modules are lazy generated
     # we want to run a single fwd pass
@@ -579,18 +607,18 @@ def run(args):
     # handle logic on whether to start /resume training or to eval
     if args.eval_with is None and args.resume_training_with is None:              # normal train loop
         print("starting main training loop from scratch...")
-        train_loop(data_loaders, model, fid_model, grapher, args)
+        train_loop(data_loaders, model, fid_model, args)
     elif args.eval_with is None and args.resume_training_with is not None:    # resume training from latest model
         print("resuming training on model {}...".format(args.resume_training_with))
-        model, grapher = _set_model_indices(model, grapher, args.resume_training_with, args)
+        model = _set_model_indices(model, args.resume_training_with, args)
         lazy_generate_modules(model, data_loaders[0].img_shp)
         if not model.load(): # restore after setting model ind
             raise Exception("model failed to load for resume training...")
 
-        train_loop(data_loaders[args.resume_training_with:], model, fid_model, grapher, args)
+        train_loop(data_loaders[args.resume_training_with:], model, fid_model, args)
     elif args.eval_with is not None:                                      # eval the provided model
         print("evaluating model {}...".format(args.eval_with))
-        model, grapher = _set_model_indices(model, grapher, args.eval_with, args)
+        model = _set_model_indices(model, args.eval_with, args)
         lazy_generate_modules(model, data_loaders[0].img_shp)
         if not model.load(): # restore after setting model ind
             raise Exception("model failed to load for resume training...")

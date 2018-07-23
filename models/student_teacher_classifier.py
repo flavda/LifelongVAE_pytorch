@@ -40,7 +40,7 @@ def kl_categorical_categorical(dist_a, dist_b, rnd_perm, from_index=0):
     # https://github.com/tensorflow/tensorflow/blob/r1.1/tensorflow/contrib/distributions/python/ops/categorical.py
     dist_a_log_softmax = F.log_softmax(dist_a_logits[from_index:], dim=-1)
     dist_a_softmax = F.softmax(dist_a_logits[from_index:], dim=-1)
-    dist_b_log_softmax = F.log_softmax(dist_b_logits[from_index:], dim=-1)
+    dist_b_log_softmax = F.log_softmax(dist_b_logits[from_index:], dim=1)
 
     # zero pad the smaller categorical
     dist_a_log_softmax, dist_b_log_softmax \
@@ -272,7 +272,7 @@ class StudentTeacherClassifier(StudentTeacher):
         z_samples = model.reparameterizer.prior(
             batch_size, scale_var=self.config['generative_scale_var'], **kwargs)
         # if I don't use torch.argmax the output's size is (150, 10)
-        return torch.argmax(F.log_softmax(model.classify(z_samples)), 1)
+        return torch.argmax(F.log_softmax(model.classify(z_samples), dim=-1), 1)
     #    return long_type(self.config['cuda'])(F.log_softmax(model.classifier(z_samples)))
 
 
@@ -299,7 +299,7 @@ class StudentTeacherClassifier(StudentTeacher):
                 z_gauss = model.reparameterizer.gaussian.prior(z_samples.size(0))
                 z_samples = torch.cat([z_gauss, z_samples], dim=-1)
 
-            return F.log_softmax(self.classifier(z_samples))
+            return F.log_softmax(self.classifier(z_samples), dim=-1)
 
     def _augment_data(self, x, y):
 #    def _augment_data(self, x, y= None):
@@ -330,7 +330,7 @@ class StudentTeacherClassifier(StudentTeacher):
         # we shuffle the data and unshuffle it later for
         # the posterior regularizer
         if self.config['shuffle_minibatches']:
-            self.rnd_perm = torch.randperm(merged.size(0))
+            self.rnd_perm = torch.randperm(merged_x.size(0))
             if self.config['cuda']:
                 self.rnd_perm = self.rnd_perm.cuda()
 
@@ -367,7 +367,7 @@ class StudentTeacherClassifier(StudentTeacher):
                 'params': params_student,
                 'x_reconstr': self.student.nll_activation(x_recon_student),
                 'x_reconstr_logits': x_recon_student,
-                'y_hat': F.log_softmax(y_hat_student),
+                'y_hat': F.log_softmax(y_hat_student, dim=-1),
                 'y_hat_logits': y_hat_student
 
             },
@@ -390,11 +390,10 @@ class StudentTeacherClassifier(StudentTeacher):
                 'params': params_teacher,
                 'x_reconstr': self.teacher.nll_activation(x_recon_teacher),
                 'x_reconstr_logits': x_recon_teacher,
-                'y_hat': F.log_softmax(y_hat_teacher),
-                'y_hat_logits': F.log_softmax(y_hat_teacher)
+                'y_hat': F.log_softmax(y_hat_teacher, dim=-1),
+                'y_hat_logits': y_hat_teacher
 
             }
 
         return ret_map
-
 

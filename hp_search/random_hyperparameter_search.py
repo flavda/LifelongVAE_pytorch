@@ -21,15 +21,15 @@ def get_rand_hyperparameters():
     return {
         'batch-size': 32,           # TODO: randomize to test these
         'reparam-type': 'mixture',  # TODO: randomize to test these
-        'layer-type': 'conv',       # TODO: randomize to test these
+        'layer-type': 'dense',       # TODO: randomize to test these
         'epochs': 500,                               # FIXED, but uses ES
         'calculate-fid-with': 'inceptionv3',         # FIXED
         'task': 'fashion',                            # FIXED
         'visdom-url': 'http://neuralnetworkart.com', # FIXED
         'visdom-port': 8104,                         # FIXED
         'shuffle-minibatches': np.random.choice([1, 0]),
-        'discrete-size': np.random.choice([1, 3, 5, 10]),
-        'continuous-size': np.random.choice([6, 8, 10, 20, 30, 40]),
+        'discrete-size': 10,
+        'continuous-size': np.random.choice([6, 8, 10, 14]),
         'optimizer': np.random.choice(['adam', 'rmsprop', 'adamnorm']),
         'continuous-mut-info': np.random.choice([1e-3, 1e-2, 0.1, 0.3, 0.5, 0.7, 1.0, 3.0, 5.0, 10.0]),
         'discrete-mut-info': np.random.choice([1e-3, 1e-2, 0.1, 0.3, 0.5, 0.7, 1.0, 3.0, 5.0, 10.0]),
@@ -64,7 +64,7 @@ srun {}""".format(
 
 def unroll_hp_and_value(hpmap):
     base_str = ""
-    no_value_keys = ["shuffle-minibatches", "use-pixel-cnn-decoder", "monte-carlo-infogain"]
+    no_value_keys = ["shuffle-minibatches", "monte-carlo-infogain"]
     for k, v in hpmap.items():
         if k in no_value_keys and v == 0:
             continue

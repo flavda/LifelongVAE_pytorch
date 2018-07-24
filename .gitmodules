@@ -1,6 +1,6 @@
 [submodule "datasets"]
 	path = datasets
-	url = https://github.com/jramapuram/datasets
+	url = https://github.com/flavda/datasets
 [submodule "helpers"]
 	path = helpers
-	url = https://github.com/jramapuram/helpers
+	url = https://github.com/flavda/helpers

@@ -7,7 +7,7 @@ import numpy as np
 from subprocess import call
 
 
-parser = argparse.ArgumentParser(description='LifeLong VAE MNIST HP Search')
+parser = argparse.ArgumentParser(description='LifeLong VAE FashionMNIST HP Search')
 parser.add_argument('--num-trials', type=int, default=50,
                     help="number of different models to run for the HP search (default: 50)")
 parser.add_argument('--num-titans', type=int, default=6,
@@ -19,27 +19,28 @@ args = parser.parse_args()
 
 def get_rand_hyperparameters():
     return {
-        'batch-size': 32,           # TODO: randomize to test these
-        'reparam-type': 'mixture',  # TODO: randomize to test these
-        'layer-type': 'dense',       # TODO: randomize to test these
+        'batch-size': np.random.choice([32, 64, 128, 256]),
+        'reparam-type': 'mixture',                   # TODO: randomize to test these
+        'layer-type': np.random.choice(['dense', 'conv']),
         'epochs': 500,                               # FIXED, but uses ES
         'calculate-fid-with': 'inceptionv3',         # FIXED
         'task': 'fashion',                            # FIXED
         'visdom-url': 'http://neuralnetworkart.com', # FIXED
-        'visdom-port': 8104,                         # FIXED
+        'visdom-port': 8100,                         # FIXED
         'shuffle-minibatches': np.random.choice([1, 0]),
-        'discrete-size': 10,
-        'continuous-size': np.random.choice([6, 8, 10, 14]),
+        'discrete-size': 1,
+        'continuous-size': np.random.choice([6, 8, 10, 14, 32, 64]),
+        'normalization': np.random.choice(['batchnorm', 'groupnorm', 'none']),
         'optimizer': np.random.choice(['adam', 'rmsprop', 'adamnorm']),
-        'continuous-mut-info': np.random.choice([1e-3, 1e-2, 0.1, 0.3, 0.5, 0.7, 1.0, 3.0, 5.0, 10.0]),
-        'discrete-mut-info': np.random.choice([1e-3, 1e-2, 0.1, 0.3, 0.5, 0.7, 1.0, 3.0, 5.0, 10.0]),
-        'use-pixel-cnn-decoder': np.random.choice([1, 0]),
+        'continuous-mut-info': np.random.choice([1e-3, 1e-2, 1e-2, 1e-2, 0.1, 0.3, 0.5, 0.7, 1.0]),
+        'discrete-mut-info': np.random.choice([0.0, 0.0, 0.0, 1e-3, 1e-2, 0.1, 0.3, 0.5, 0.7, 1.0]),
+        'use-pixel-cnn-decoder': np.random.choice([0]),
         'monte-carlo-infogain': np.random.choice([1, 0]),
-        'consistency-gamma': np.random.choice([0.1, 0.5, 1.0, 3.0, 5.0, 10.0, 100.0]),
+        'consistency-gamma': np.random.choice([0.1, 0.5, 1.0, 3.0, 5.0]),
         'kl-reg': np.random.choice([1.0, 1.1, 1.2, 1.3, 2.0, 3.0]),
         'likelihood-gamma': np.random.choice([0.0, 0.0, 0.0, 1.0, 0.5, 0.2, 1.2, 1.5, 2.0]),
-        'generative-scale-var': np.random.choice([1.0, 1.01, 1.02, 1.03, 1.04, 1.05, 1.1]),
-        'mut-clamp-strategy': np.random.choice(['norm']), #TODO: randomize and test against clamp
+        'generative-scale-var': np.random.choice([1.0]), #, #1.0, 1.0, 1.01, 1.02, 1.03, 1.04, 1.05, 1.1]),
+        'mut-clamp-strategy': np.random.choice(['norm', 'none', 'clamp']), #TODO: randomize and test against clamp
         'mut-clamp-value': np.random.choice([1, 2, 5, 10, 30, 50, 100])
     }
 
@@ -64,7 +65,7 @@ srun {}""".format(
 
 def unroll_hp_and_value(hpmap):
     base_str = ""
-    no_value_keys = ["shuffle-minibatches", "monte-carlo-infogain"]
+    no_value_keys = ["shuffle-minibatches", "monte-carlo-infogain", "use-pixel-cnn-decoder"]
     for k, v in hpmap.items():
         if k in no_value_keys and v == 0:
             continue
@@ -75,16 +76,21 @@ def unroll_hp_and_value(hpmap):
         if k == "mut-clamp-value" and hpmap['mut-clamp-strategy'] != 'clamp':
             continue
 
+        if k == "normalization" and hpmap['layer-type'] == 'dense':
+            # only use BN or None for dense layers [GN doesnt make sense]
+            base_str += " --normalization={}".format(np.random.choice(['batchnorm', 'none']))
+            continue
+
         base_str += " --{}={}".format(k, v)
 
     return base_str
 
 def format_task_str(hp):
     hpmap_str = unroll_hp_and_value(hp)
-    return """/home/ramapur0/.venv3/bin/python ../main.py --model-dir=.nonfidmodels
+    return """/home/ramapur0/.venv3/bin/python ../main_classification.py --model-dir=.nonfidmodels
     --early-stop {} --uid={}""".format(
         hpmap_str,
-        "{}".format(hp['task']) + "_hp_search{}_"
+        "{}".format('trial_2_' + hp['task']) + "_hp_search{}_"
     ).replace("\n", " ").replace("\r", "").replace("   ", " ").replace("  ", " ").strip()
 
 def get_job_map(idx, gpu_type):
@@ -92,7 +98,7 @@ def get_job_map(idx, gpu_type):
         'partition': 'shared-gpu',
         'time': '12:00:00',
         'gpu': gpu_type,
-        'job-name': "hp_search{}".format(idx)
+        'job-name': "classif_trial2_hp_search{}".format(idx)
     }
 
 def run(args):
@@ -132,7 +138,7 @@ def run(args):
     # spawn the jobs!
     for i, js in enumerate(set(job_strs)):
         print(js + "\n")
-        job_name = "hp_search_{}.sh".format(i)
+        job_name = "trial_2_hp_search_{}.sh".format(i)
         with open(job_name, 'w') as f:
             f.write(js)
 

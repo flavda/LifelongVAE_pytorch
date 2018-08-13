@@ -73,9 +73,8 @@ def lazy_generate_modules_class(model, img_shp, batch_size, cuda):
     ''' Super hax, but needed for building lazy modules '''
     model.eval()
     data = float_type(cuda)(batch_size, *img_shp).normal_()
-    labels = long_type(self.config['cuda'])(self.student.config['batch_size'])
+    labels = long_type(cuda)(batch_size)
  #   labels = long_type(self.config['cuda'])(self.student.config['batch_size']).normal_()
-
     model(Variable(data), Variable(labels))
 
 

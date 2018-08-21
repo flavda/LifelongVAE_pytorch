@@ -21,10 +21,10 @@ from helpers.distributions import nll as nll_fn
 class ParallellyReparameterizedVAEClassifier(ParallellyReparameterizedVAE):
     ''' This implementation uses a parallel application of
         the reparameterizer via the mixture type. '''
-    def __init__(self, input_shape, output_size = 10, activation_fn=nn.ELU, num_current_model=0, **kwargs):
+    def __init__(self, input_shape, output_size=10, activation_fn=nn.ELU, num_current_model=0, **kwargs):
         super(ParallellyReparameterizedVAEClassifier, self).__init__(input_shape,
-                                                           activation_fn=activation_fn,
-                                                           num_current_model=num_current_model,
+                                                                     activation_fn=activation_fn,
+                                                                     num_current_model=num_current_model,
                                                            **kwargs)
         self.output_size = output_size
         # build the reparameterizer
@@ -43,14 +43,17 @@ class ParallellyReparameterizedVAEClassifier(ParallellyReparameterizedVAE):
             raise Exception("unknown reparameterization type")
 
 
-     #   # build classifier
+     # build classifier which will classify latent variables z
         self.classifier = self.build_classifier()
+
+        # build a classifier which will classify x
+        self.simple_classifier = self.build_simlpe_classifier()
 
 
     def build_classifier(self):
 
         classifier = build_dense_encoder(input_shape=self.reparameterizer.output_size,
-                                         output_size=10, latent_size=512,
+                                            output_size=10, latent_size=512,
                          activation_fn=nn.ELU, normalization_str=self.config['normalization_classifier'])
 
 
@@ -68,17 +71,43 @@ class ParallellyReparameterizedVAEClassifier(ParallellyReparameterizedVAE):
     #    return self.build_classifier(z_logits)
         return self.classifier(z)
 
+    def build_simlpe_classifier(self):
+
+        simple_classifier = build_dense_encoder(input_shape = self.input_shape,
+                                                output_size=10, latent_size=512,
+                         activation_fn=nn.ELU, normalization_str=self.config['normalization_classifier'])
+
+
+        if self.config['ngpu'] > 1:
+            simple_classifier = nn.DataParallel(simple_classifier)
+
+        if self.config['cuda']:
+            simple_classifier = simple_classifier.cuda()
+
+        return simple_classifier
+
+    def simple_classify(self, x):
+        # ''' classify input variables x '''
+        return self.simple_classifier(x)
+
     def forward(self, x, y):
         ''' params is a map of the latent variable's parameters'''
         z, params = self.posterior(x)
+        #return self.decode(z), params, self.classify(z)
 
+        if self.config['disable_VAEclassifier'] is True:
+            # simple/traditional classification based on input x
+            return self.decode(z), params, self.simple_classify(x)
+        # cassification based on lattent variables z
         return self.decode(z), params, self.classify(z)
+
+
 
     def loss_function(self, recon_x, x, params, y_hat_logits, y, mut_info = None):
         nll = nll_fn(x, recon_x, self.config['nll_type'])
         kld = self.config['kl_reg'] * self.kld(params)
         elbo = nll + kld
-        classification_loss = F.cross_entropy(y_hat_logits, y)
+        classification_loss = F.cross_entropy(y_hat_logits, y, reduce=False)
 
         mut_info = self.mut_info(params)
         # handle the mutual information term

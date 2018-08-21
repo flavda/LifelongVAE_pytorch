@@ -113,6 +113,7 @@ class AbstractVAE(nn.Module):
                                           latent_size=512,
                                           activation_fn=self.activation_fn,
                                           normalization_str=self.config['normalization'])
+
         else:
             raise Exception("unknown layer type requested")
 

@@ -29,7 +29,11 @@ parser = argparse.ArgumentParser(description='LifeLong VAE Pytorch')
 
 # Classifier
 parser.add_argument('--disable-classifier', action='store_true',
-                    help='dienables classification (enables only reconstruction)')
+                    help='dienables classification (enables only reconstruction) (default: False)')
+parser.add_argument('--disable-VAEclassifier', action='store_true',
+                    help='disables classification based on lattent variable, use traditional classification ' \
+                         'based on x (enables reconstruction with a simple classifier) (default: False)')
+
 # Task parameters
 parser.add_argument('--uid', type=str, default="",
                     help="add a custom task-specific unique id; appended to name (default: None)")
@@ -422,7 +426,7 @@ def train_loop(data_loaders, model, fid_model, args):
         len(list(model.parameters())), number_of_parameters(model),
         len(list(model.student.parameters())), number_of_parameters(model.student))
     )
-    print(data_loaders)
+   # print(data_loaders)
 
 
     # main training loop

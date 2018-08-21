@@ -315,7 +315,7 @@ class StudentTeacherClassifier(StudentTeacher):
         generated_teacher_samples = self.generate_synthetic_samples(self.teacher, batch_size)
         generated_teacher_labels = self.generate_synthetic_labels(self.teacher, batch_size)
 
-        merged_x =  torch.cat([x[0:self.num_student_samples],
+        merged_x = torch.cat([x[0:self.num_student_samples],
                              generated_teacher_samples[0:self.num_teacher_samples]], 0)
       #  print(y[0:self.num_student_samples].size())
       #  print(generated_teacher_labels[0:self.num_teacher_samples].size())

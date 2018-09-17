@@ -18,8 +18,8 @@ from datasets.loader import get_split_data_loaders, get_loader
 from optimizers.adamnormgrad import AdamNormGrad
 from helpers.grapher import Grapher
 from helpers.fid import train_fid_model
-from helpers.metrics import calculate_fid
-from helpers.metrics_class import calculate_consistency_class, estimate_fisher_class, softmax_accuracy
+from helpers.metrics import calculate_fid, softmax_accuracy
+from helpers.metrics_class import calculate_consistency_class, estimate_fisher_class
 from helpers.utils import float_type, ones_like, \
     append_to_csv, num_samples_in_loader, check_or_create_dir, \
     dummy_context, number_of_parameters, long_type
@@ -28,11 +28,16 @@ from helpers.utils import float_type, ones_like, \
 parser = argparse.ArgumentParser(description='LifeLong VAE Pytorch')
 
 # Classifier
+# (action what it does when you give it in comment line, default if you don't)
 parser.add_argument('--disable-classifier', action='store_true',
                     help='dienables classification (enables only reconstruction) (default: False)')
 parser.add_argument('--disable-VAEclassifier', action='store_true',
                     help='disables classification based on lattent variable, use traditional classification ' \
                          'based on x (enables reconstruction with a simple classifier) (default: False)')
+parser.add_argument('--enable-sequentially-merge-test', action='store_true',
+                    help='enables to merge tasks during testing (default: false)')
+        #so if i want to merge the tasks I have to give it in comment line
+
 # Task parameters
 parser.add_argument('--uid', type=str, default="",
                     help="add a custom task-specific unique id; appended to name (default: None)")
@@ -235,7 +240,7 @@ def test(epoch, model, fisher, loader, grapher, prefix='test'):
      ''' test loop helper '''
      return execute_graph(epoch, model=model, fisher=fisher,
                           data_loader=loader, grapher=grapher,
-                          optimizer=None, prefix='test')
+                          optimizer=None, prefix=prefix)
 
 
 def execute_graph(epoch, model, fisher, data_loader, grapher, optimizer=None, prefix='test'):
@@ -332,10 +337,11 @@ def generate(student_teacher, grapher, name='teacher'):
 def get_model_and_loader():
     ''' helper to return the model and the loader '''
     if args.disable_sequential: # vanilla batch training
-        loaders = get_loader(args)
+        loaders = get_loader(args, sequentially_merge_test= args.enable_sequentially_merge_test)
         loaders = [loaders] if not isinstance(loaders, list) else loaders
     else: # classes split
         loaders = get_split_data_loaders(args, num_classes=10)
+        # sequentially_merge_test= False -> args
 
     for l in loaders:
         print("train = ", num_samples_in_loader(l.train_loader),
@@ -430,6 +436,16 @@ def train_loop(data_loaders, model, fid_model, grapher, args):
     # main training loop
     fisher = None
     for j, loader in enumerate(data_loaders):
+
+
+        num_epochs = args.epochs  # TODO: randomize epochs by something like: + np.random.randint(0, 13)
+        print("training current distribution for {} epochs".format(num_epochs))
+        early = EarlyStopping(model, max_steps=50, burn_in_interval=None) if args.early_stop else None
+        # burn_in_interval=int(num_epochs*0.2)) if args.early_stop else None
+
+# ------------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------------
+
         num_epochs = args.epochs # TODO: randomize epochs by something like: + np.random.randint(0, 13)
         print("training current distribution for {} epochs".format(num_epochs))
         early = EarlyStopping(model, max_steps=50, burn_in_interval=None) if args.early_stop else None
@@ -438,34 +454,51 @@ def train_loop(data_loaders, model, fid_model, grapher, args):
         test_loss = None
         for epoch in range(1, num_epochs + 1):
             train(epoch, model, fisher, optimizer, loader.train_loader, grapher)
-            test_loss = test(epoch, model, fisher, loader.test_loader, grapher)
-            if args.early_stop and early(test_loss['loss_mean']):
-                early.restore() # restore and test+generate again
-                test_loss = test_and_generate(epoch, model, fisher, loader, grapher)
-                break
-
+            if args.enable_sequentially_merge_test:
+                test_loss = test(epoch, model, fisher, loader.test_loader, grapher)
+                if args.early_stop and early(test_loss['loss_mean']):
+                    early.restore() # restore and test+generate again
+                    test_loss = test_and_generate(epoch, model, fisher, loader, grapher)
+                    break
+            else:
+                for k in range(0, j + 1):
+                    # to save at the end the perfornance of the first task when we train the last one
+                    prefix_i = "test" + str(k)
+                    test_loss = test(epoch, model, fisher, data_loaders[k].test_loader, grapher, prefix_i)#, prefix=prefix_i)
+                # if args.early_stop and early(test_loss['loss_mean']):
+                #     early.restore() # restore and test+generate again
+                #     test_loss = test_and_generate(epoch, model, fisher, loader, grapher)
+                #     break
+                    check_or_create_dir(os.path.join(args.output_dir))
+                    append_to_csv([test_loss['elbo_mean']], os.path.join(args.output_dir,
+                                                                         str(args.uid) + "_test_elbo_ep_trTask" + str(
+                                                                             j) + "_testTask" + str(k) + ".csv"))
+                    append_to_csv([test_loss['classification_loss_mean']], os.path.join(args.output_dir, str(
+                        args.uid) + "_test_classif_ep_trTask" + str(j) + "_testTask" + str(k) + ".csv"))
+                    append_to_csv([test_loss['accuracy_mean']], os.path.join(args.output_dir,
+                                                                             str(args.uid) + "_test_accuracy_ep_trTask" + str(
+                                                                                 j) + "_testTask" + str(k) + ".csv"))
             generate(model, grapher, 'student') # generate student samples
             generate(model, grapher, 'teacher') # generate teacher samples
 
-        # evaluate and save away one-time metrics, these include:
-        #    1. test elbo
-        #    2. FID
-        #    3. consistency
-        #    4. num synth + num true samples
-        #    5. dump config to visdom
+
         check_or_create_dir(os.path.join(args.output_dir))
         append_to_csv([test_loss['elbo_mean']], os.path.join(args.output_dir, "{}_test_elbo.csv".format(args.uid)))
-        append_to_csv([test_loss['classification_loss_mean']], os.path.join(args.output_dir, "{}_test_classif.csv".format(args.uid)))
-        append_to_csv([test_loss['accuracy_mean']], os.path.join(args.output_dir, "{}_test_accuracy.csv".format(args.uid)))
+        append_to_csv([test_loss['classification_loss_mean']],
+                      os.path.join(args.output_dir, "{}_test_classif.csv".format(args.uid)))
+        append_to_csv([test_loss['accuracy_mean']],
+                      os.path.join(args.output_dir, "{}_test_accuracy.csv".format(args.uid)))
         num_synth_samples = np.ceil(epoch * args.batch_size * model.ratio)
         num_true_samples = np.ceil(epoch * (args.batch_size - (args.batch_size * model.ratio)))
-        append_to_csv([num_synth_samples],os.path.join(args.output_dir, "{}_numsynth.csv".format(args.uid)))
+        append_to_csv([num_synth_samples], os.path.join(args.output_dir, "{}_numsynth.csv".format(args.uid)))
         append_to_csv([num_true_samples], os.path.join(args.output_dir, "{}_numtrue.csv".format(args.uid)))
         append_to_csv([epoch], os.path.join(args.output_dir, "{}_epochs.csv".format(args.uid)))
         grapher.vis.text(num_synth_samples, opts=dict(title="num_synthetic_samples"))
         grapher.vis.text(num_true_samples, opts=dict(title="num_true_samples"))
         grapher.vis.text(pprint.PrettyPrinter(indent=4).pformat(model.student.config),
                          opts=dict(title="config"))
+
+
 
         # calc the consistency using the **PREVIOUS** loader
         if j > 0:

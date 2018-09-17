@@ -18,8 +18,8 @@ from datasets.loader import get_split_data_loaders, get_loader
 from optimizers.adamnormgrad import AdamNormGrad
 from helpers.grapher import Grapher
 from helpers.fid import train_fid_model
-from helpers.metrics import calculate_fid
-from helpers.metrics_class import calculate_consistency_class, estimate_fisher_class, softmax_accuracy
+from helpers.metrics import calculate_fid, softmax_accuracy
+from helpers.metrics_class import calculate_consistency_class, estimate_fisher_class
 from helpers.utils import float_type, ones_like, \
     append_to_csv, num_samples_in_loader, check_or_create_dir, \
     dummy_context, number_of_parameters, long_type
@@ -33,6 +33,10 @@ parser.add_argument('--disable-classifier', action='store_true',
 parser.add_argument('--disable-VAEclassifier', action='store_true',
                     help='disables classification based on lattent variable, use traditional classification ' \
                          'based on x (enables reconstruction with a simple classifier) (default: False)')
+parser.add_argument('--enable-sequentially-merge-test', action='store_true',
+                    help='enables to merge tasks during testing (default: false)')
+        #so if i want to merge the tasks I have to give it in comment line
+
 
 # Task parameters
 parser.add_argument('--uid', type=str, default="",
@@ -333,7 +337,7 @@ def generate(student_teacher, name='teacher'):
 def get_model_and_loader():
     ''' helper to return the model and the loader '''
     if args.disable_sequential: # vanilla batch training
-        loaders = get_loader(args)
+        loaders = get_loader(args, sequentially_merge_test= args.enable_sequentially_merge_test)
         loaders = [loaders] if not isinstance(loaders, list) else loaders
     else: # classes split
         loaders = get_split_data_loaders(args, num_classes=10)
@@ -413,7 +417,7 @@ def eval_model(data_loaders, model, fid_model, args):
             num_fid_samples = 4000 if args.calculate_fid_with != 'inceptionv3' else 1000
             append_to_csv(calculate_fid(fid_model=fid_model,
                                         model=model,
-                                        loader=loader,
+                                        loader=loader, grapher=None,
                                         num_samples=num_fid_samples,
                                         cuda=args.cuda),
                           os.path.join(args.output_dir, "{}_fid.csv".format(args.uid)))
@@ -434,8 +438,6 @@ def train_loop(data_loaders, model, fid_model, args):
     for j, loader in enumerate(data_loaders):
         num_epochs = args.epochs # TODO: randomize epochs by something like: + np.random.randint(0, 13)
         print("training current distribution for {} epochs".format(num_epochs))
-        early = EarlyStopping(model, max_steps=50, burn_in_interval=None) if args.early_stop else None
-                              #burn_in_interval=int(num_epochs*0.2)) if args.early_stop else None
 
         test_loss = None
         train_loss = None
@@ -459,7 +461,7 @@ def train_loop(data_loaders, model, fid_model, args):
             append_to_csv([train_loss['elbo_mean']],
                           os.path.join(args.output_dir, "{}_train_elbo_epochs.csv".format(args.uid)))
             append_to_csv([train_loss['classification_loss_mean']],
-                          os.path.join(args.output_dir, "{}_test_classif_epochs.csv".format(args.uid)))
+                          os.path.join(args.output_dir, "{}_train_classif_epochs.csv".format(args.uid)))
             append_to_csv([train_loss['accuracy_mean']],
                           os.path.join(args.output_dir, "{}_train_accuracy_epochs.csv".format(args.uid)))
 
@@ -482,9 +484,9 @@ def train_loop(data_loaders, model, fid_model, args):
         check_or_create_dir(os.path.join(args.output_dir))
         append_to_csv([test_loss['elbo_mean']], os.path.join(args.output_dir, "{}_test_elbo.csv".format(args.uid)))
         append_to_csv([test_loss['classification_loss_mean']], os.path.join(args.output_dir, "{}_test_classif.csv".format(args.uid)))
-        append_to_csv([test_loss['accuracy_mean']], os.path.join(args.output_dir, "{}_train_accuracy.csv".format(args.uid)))
+        append_to_csv([test_loss['accuracy_mean']], os.path.join(args.output_dir, "{}_test_accuracy.csv".format(args.uid)))
         append_to_csv([train_loss['elbo_mean']], os.path.join(args.output_dir, "{}_train_elbo.csv".format(args.uid)))
-        append_to_csv([train_loss['classification_loss_mean']], os.path.join(args.output_dir, "{}_test_classif.csv".format(args.uid)))
+        append_to_csv([train_loss['classification_loss_mean']], os.path.join(args.output_dir, "{}_train_classif.csv".format(args.uid)))
         append_to_csv([train_loss['accuracy_mean']], os.path.join(args.output_dir, "{}_train_accuracy.csv".format(args.uid)))
         num_synth_samples = np.ceil(epoch * args.batch_size * model.ratio)
         num_true_samples = np.ceil(epoch * (args.batch_size - (args.batch_size * model.ratio)))
@@ -507,7 +509,7 @@ def train_loop(data_loaders, model, fid_model, args):
             num_fid_samples = 4000 if args.calculate_fid_with != 'inceptionv3' else 1000
             append_to_csv(calculate_fid(fid_model=fid_model,
                                         model=model,
-                                        loader=loader,
+                                        loader=loader, grapher=None,
                                         num_samples=num_fid_samples,
                                         cuda=args.cuda),
                           os.path.join(args.output_dir, "{}_fid.csv".format(args.uid)))

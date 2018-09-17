@@ -109,6 +109,8 @@ class StudentTeacherClassifier(StudentTeacher):
 
         return False
 
+
+
     def _lifelong_loss_function_with_classifier(self, output_map):
         ''' returns a combined loss of the VAE loss
             + regularizers '''
@@ -266,13 +268,22 @@ class StudentTeacherClassifier(StudentTeacher):
 
 
 
-    def generate_synthetic_labels(self, model, batch_size, **kwargs):
+    # def generate_synthetic_labels(self, model, batch_size, **kwargs):
+    #     # to generate labels
+    #     z_samples = model.reparameterizer.prior(
+    #         batch_size, scale_var=self.config['generative_scale_var'], **kwargs)
+    #     # if I don't use torch.argmax the output's size is (150, 10)
+    #     return torch.argmax(F.log_softmax(model.classify(z_samples), dim=-1), 1)
+
+    def generate_synthetic_samples_and_labels(self, model, batch_size, **kwargs):
         # to generate labels
         z_samples = model.reparameterizer.prior(
             batch_size, scale_var=self.config['generative_scale_var'], **kwargs)
         # if I don't use torch.argmax the output's size is (150, 10)
-        return torch.argmax(F.log_softmax(model.classify(z_samples), dim=-1), 1)
-    #    return long_type(self.config['cuda'])(F.log_softmax(model.classifier(z_samples)))
+        #torch.argmax(tensor, -1) equivalent to: _,indeces =torch.max(tensor, -1)
+        return model.nll_activation(model.generate(z_samples)),\
+               torch.argmax(F.log_softmax(model.classify(z_samples), dim=-1), -1)
+
 
 
     def generate_synthetic_sequential_labels(self, model, num_rows=8):
@@ -312,8 +323,9 @@ class StudentTeacherClassifier(StudentTeacher):
         batch_size = x.size(0)
         self.num_teacher_samples = int(batch_size * self.ratio)
         self.num_student_samples = max(batch_size - self.num_teacher_samples, 1)
-        generated_teacher_samples = self.generate_synthetic_samples(self.teacher, batch_size)
-        generated_teacher_labels = self.generate_synthetic_labels(self.teacher, batch_size)
+        generated_teacher_samples, generated_teacher_labels = \
+            self.generate_synthetic_samples_and_labels(self.teacher, batch_size)
+        # generated_teacher_labels = self.generate_synthetic_labels(self.teacher, batch_size)
 
         merged_x = torch.cat([x[0:self.num_student_samples],
                              generated_teacher_samples[0:self.num_teacher_samples]], 0)
@@ -372,7 +384,7 @@ class StudentTeacherClassifier(StudentTeacher):
             },
             'augmented': {
                 'data': x_augmented,
-                'labels' : y_augmented,
+                'labels' : y_augmented, #are actevated + argmax
                 'num_student': self.num_student_samples,
                 'num_teacher': self.num_teacher_samples
             }

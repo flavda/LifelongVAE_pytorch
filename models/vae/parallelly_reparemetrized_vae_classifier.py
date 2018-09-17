@@ -50,6 +50,9 @@ class ParallellyReparameterizedVAEClassifier(ParallellyReparameterizedVAE):
         self.simple_classifier = self.build_simlpe_classifier()
 
 
+
+
+
     def build_classifier(self):
 
         classifier = build_dense_encoder(input_shape=self.reparameterizer.output_size,

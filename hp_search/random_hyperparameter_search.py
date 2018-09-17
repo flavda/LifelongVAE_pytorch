@@ -8,7 +8,7 @@ from subprocess import call
 
 
 parser = argparse.ArgumentParser(description='LifeLong VAE FashionMNIST HP Search')
-parser.add_argument('--num-trials', type=int, default=50,
+parser.add_argument('--num-trials', type=int, default=100,
                     help="number of different models to run for the HP search (default: 50)")
 parser.add_argument('--num-titans', type=int, default=6,
                     help="number of TitanXP's (default: 6)")
@@ -21,22 +21,23 @@ def get_rand_hyperparameters():
     return {
         'batch-size': np.random.choice([32, 64, 128, 256]),
         'reparam-type': 'mixture',                   # TODO: randomize to test these
-        'layer-type': np.random.choice(['dense', 'conv']),
+     #   'layer-type': np.random.choice(['dense', 'conv']),
+        'layer-type': np.random.choice(['conv']),
         'epochs': 500,                               # FIXED, but uses ES
         'calculate-fid-with': 'inceptionv3',         # FIXED
         'task': 'fashion',                            # FIXED
-        'visdom-url': 'http://neuralnetworkart.com', # FIXED
-        'visdom-port': 8100,                         # FIXED
+        'visdom-url': 'http://129.194.69.49', # FIXED
+        'visdom-port': 8097,                         # FIXED
         'shuffle-minibatches': np.random.choice([1, 0]),
-        'discrete-size': 1,
-        'continuous-size': np.random.choice([6, 8, 10, 14, 32, 64]),
+        'discrete-size': np.random.choice([1, 10, 20]),
+        'continuous-size': np.random.choice([10, 14, 32]), #6, 8, 10, 14, 32, 64
         'normalization': np.random.choice(['batchnorm', 'groupnorm', 'none']),
         'optimizer': np.random.choice(['adam', 'rmsprop', 'adamnorm']),
         'continuous-mut-info': np.random.choice([1e-3, 1e-2, 1e-2, 1e-2, 0.1, 0.3, 0.5, 0.7, 1.0]),
         'discrete-mut-info': np.random.choice([0.0, 0.0, 0.0, 1e-3, 1e-2, 0.1, 0.3, 0.5, 0.7, 1.0]),
         'use-pixel-cnn-decoder': np.random.choice([0]),
         'monte-carlo-infogain': np.random.choice([1, 0]),
-        'consistency-gamma': np.random.choice([0.1, 0.5, 1.0, 3.0, 5.0]),
+        'consistency-gamma': np.random.choice([0.1, 0.5, 1.0, 3.0, 5.0]),#0.1, 0.5, 1.0, 3.0, 5.0
         'kl-reg': np.random.choice([1.0, 1.1, 1.2, 1.3, 2.0, 3.0]),
         'likelihood-gamma': np.random.choice([0.0, 0.0, 0.0, 1.0, 0.5, 0.2, 1.2, 1.5, 2.0]),
         'generative-scale-var': np.random.choice([1.0]), #, #1.0, 1.0, 1.01, 1.02, 1.03, 1.04, 1.05, 1.1]),
